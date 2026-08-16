@@ -3,9 +3,11 @@
 import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
 import {
   AnalysisResult,
+  FibonacciAnalysis,
   MarketRegime,
   StrategySettings,
   analyzeBars,
+  analyzeFibonacci,
   analyzeMarketRegime,
   fetchTaiexDailyBars,
   fetchTwseDailyBars,
@@ -141,11 +143,65 @@ function MarketGate({ market }: { market: MarketRegime }) {
   );
 }
 
+function FibonacciCard({ fibonacci }: { fibonacci: FibonacciAnalysis }) {
+  return (
+    <section className={`fib-card card fib-${fibonacci.direction}`}>
+      <div className="section-heading">
+        <div><span>費波那契區間</span><h2>回檔支撐與擴展目標</h2></div>
+        <small>近 {fibonacci.lookback} 個交易日・資料至 {fibonacci.dataDate}</small>
+      </div>
+
+      <div className="fib-overview">
+        <div>
+          <span className="fib-direction">{fibonacci.directionLabel}</span>
+          <h3>{fibonacci.zoneLabel}</h3>
+          <p>{fibonacci.summary}</p>
+        </div>
+        <div className="fib-nearest">
+          <span>現價 {formatPrice(fibonacci.currentPrice)}</span>
+          <dl>
+            <div><dt>最近支撐</dt><dd>{fibonacci.nearestSupport === null ? "—" : formatPrice(fibonacci.nearestSupport)}</dd></div>
+            <div><dt>最近壓力</dt><dd>{fibonacci.nearestResistance === null ? "—" : formatPrice(fibonacci.nearestResistance)}</dd></div>
+          </dl>
+        </div>
+      </div>
+
+      <div className="fib-anchors">
+        <div><span>波段低點</span><strong>{formatPrice(fibonacci.swingLow.price)}</strong><small>{fibonacci.swingLow.date}</small></div>
+        <div><span>波段高點</span><strong>{formatPrice(fibonacci.swingHigh.price)}</strong><small>{fibonacci.swingHigh.date}</small></div>
+        <div><span>{fibonacci.direction === "up" ? "目前回檔" : "目前反彈"}</span><strong>{Math.max(0, fibonacci.retracementPercent).toFixed(1)}%</strong><small>相對本次波段</small></div>
+      </div>
+
+      <div className="fib-columns">
+        <div className="fib-levels">
+          <div className="fib-level-title"><span>{fibonacci.direction === "up" ? "回檔支撐" : "反彈壓力"}</span><small>23.6%～78.6%</small></div>
+          {fibonacci.retracements.map((level) => (
+            <div className="fib-level" key={level.label}>
+              <span>{level.label}</span><strong>{formatPrice(level.price)}</strong>
+            </div>
+          ))}
+        </div>
+        <div className="fib-levels fib-extension-levels">
+          <div className="fib-level-title"><span>{fibonacci.direction === "up" ? "突破目標" : "下行風險"}</span><small>擴展</small></div>
+          {fibonacci.extensions.map((level) => (
+            <div className="fib-level" key={level.label}>
+              <span>{level.label}</span><strong>{formatPrice(level.price)}</strong>
+            </div>
+          ))}
+        </div>
+      </div>
+      <p className="fib-note"><Icon name="alert" size={16} />費波那契是價格區間工具，不是單獨的買進訊號；仍以大盤、趨勢、量價與停損條件為主。</p>
+    </section>
+  );
+}
+
 export default function Home() {
   const [code, setCode] = useState("0050");
   const [settings, setSettings] = useState<StrategySettings>(DEFAULT_SETTINGS);
   const [result, setResult] = useState<AnalysisResult | null>(null);
-  const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
+  const [fibonacci, setFibonacci] = useState<FibonacciAnalysis | null>(null);
+  const [marketResult, setMarketResult] = useState<MarketRegime | null>(null);
+  const [status, setStatus] = useState<"idle" | "loading" | "partial" | "success" | "error">("idle");
   const [error, setError] = useState("");
   const [progress, setProgress] = useState(0);
   const [loadingStage, setLoadingStage] = useState("先判斷台股大盤");
@@ -186,6 +242,9 @@ export default function Home() {
     const target = normalizeStockCode(requestedCode);
     setCode(target);
     setStatus("loading");
+    setResult(null);
+    setFibonacci(null);
+    setMarketResult(null);
     setError("");
     setProgress(0);
     setLoadingStage("先判斷台股大盤");
@@ -222,10 +281,22 @@ export default function Home() {
         }
       }
 
+      setMarketResult(market);
+
       setLoadingStage("再分析個股條件");
       const data = await fetchTwseDailyBars(target, (completed, total) =>
         setProgress(35 + Math.round((completed / total) * 65)),
       );
+      const nextFibonacci = analyzeFibonacci(target, data.name, data.bars);
+      setFibonacci(nextFibonacci);
+      if (data.bars.length < 120) {
+        setStatus("partial");
+        setError(
+          `${data.name}（${target}）目前只有 ${data.bars.length} 個交易日，尚不足以計算 MA99；` +
+            "本次只顯示費波那契觀察區，不提供進場訊號與部位建議。",
+        );
+        return;
+      }
       const nextResult = analyzeBars(target, data.name, data.bars, settings, market);
       setResult(nextResult);
       setStatus("success");
@@ -382,6 +453,21 @@ export default function Home() {
           </section>
         ) : null}
 
+        {status === "partial" && fibonacci && marketResult ? (
+          <div className="results" aria-live="polite">
+            <MarketGate market={marketResult} />
+            <section className="partial-card card" role="status">
+              <div className="partial-icon"><Icon name="clock" size={24} /></div>
+              <div>
+                <span>新上市標的觀察模式</span>
+                <h2>先看價格區間，暫不判斷進場</h2>
+                <p>{error}</p>
+              </div>
+            </section>
+            <FibonacciCard fibonacci={fibonacci} />
+          </div>
+        ) : null}
+
         {status === "success" && result ? (
           <div className="results" aria-live="polite">
             {usingCache ? <div className="cache-notice"><Icon name="clock" size={18} />{error}</div> : null}
@@ -410,6 +496,8 @@ export default function Home() {
               <Metric label="RSI 14" value={result.metrics.rsi14.toFixed(1)} hint={result.metrics.rsi14 >= 70 ? "偏熱" : result.metrics.rsi14 <= 35 ? "低檔" : "中性"} />
               <Metric label="ATR 14" value={formatPrice(result.metrics.atr14)} hint={`約 ${(result.metrics.atr14 / result.price * 100).toFixed(2)}%`} />
             </section>
+
+            {fibonacci ? <FibonacciCard fibonacci={fibonacci} /> : null}
 
             <section className="chart-card card">
               <div className="section-heading">
@@ -492,7 +580,8 @@ export default function Home() {
             <article><b>02</b><h3>個股趨勢</h3><p>MA25 高於 MA99，價格也要站上 MA99。不在空頭中猜底。</p></article>
             <article><b>03</b><h3>只買好位置</h3><p>等待靠近 MA25、RSI 降溫，或用放量突破確認，不追過熱價格。</p></article>
             <article><b>04</b><h3>等轉強再進</h3><p>收盤站回 MA7、MACD 柱增強，KD 或價格同步轉強才觸發。</p></article>
-            <article><b>05</b><h3>部位由風險決定</h3><p>以 ATR 與近期低點設停損，再乘上大盤允許的部位係數。</p></article>
+            <article><b>05</b><h3>費波那契定位</h3><p>用回檔位找支撐區、用擴展位規劃突破後目標，但不單獨作為買點。</p></article>
+            <article><b>06</b><h3>部位由風險決定</h3><p>以 ATR 與近期低點設停損，再乘上大盤允許的部位係數。</p></article>
           </div>
           <p className="disclaimer">本工具是規則化研究與風險管理輔助，不是投資建議、報酬保證或自動下單服務。訊號應搭配個人財務狀況與事件風險判斷。</p>
         </section>

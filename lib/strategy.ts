@@ -32,6 +32,32 @@ export type ChartPoint = {
   ma99: number | null;
 };
 
+export type FibonacciLevel = {
+  ratio: number;
+  label: string;
+  price: number;
+};
+
+export type FibonacciAnalysis = {
+  code: string;
+  name: string;
+  dataDate: string;
+  barsCount: number;
+  lookback: number;
+  direction: "up" | "down";
+  directionLabel: "上升波段" | "下降波段";
+  currentPrice: number;
+  swingLow: { date: string; price: number };
+  swingHigh: { date: string; price: number };
+  retracementPercent: number;
+  zoneLabel: string;
+  summary: string;
+  retracements: FibonacciLevel[];
+  extensions: FibonacciLevel[];
+  nearestSupport: number | null;
+  nearestResistance: number | null;
+};
+
 export type MarketRegime = {
   state: "bull" | "neutral" | "bear";
   label: "多頭可操作" | "中性降部位" | "空頭停止進場";
@@ -246,10 +272,10 @@ export async function fetchTwseDailyBars(
   }
 
   if (finMindData?.bars.length) {
-    if (finMindData.bars.length >= 120) return finMindData;
+    if (finMindData.bars.length >= 40) return finMindData;
     throw new Error(
       `${finMindData.name}（${normalizedCode}）目前只有 ${finMindData.bars.length} 個交易日資料，` +
-        "尚不足以計算 MA99；累積至少 120 個交易日後才能使用本策略。",
+        "尚不足以建立可靠的費波那契波段；累積至少 40 個交易日後再分析。",
     );
   }
 
@@ -316,11 +342,11 @@ export async function fetchTwseDailyBars(
     a.date.localeCompare(b.date),
   );
 
-  if (deduplicated.length < 120) {
+  if (deduplicated.length < 40) {
     throw new Error(
       deduplicated.length === 0
         ? "找不到資料。請確認代碼屬於證交所上市股票或 ETF；上櫃股票目前尚未支援。"
-        : `只有 ${deduplicated.length} 個交易日資料，尚不足以計算 MA99。`,
+        : `只有 ${deduplicated.length} 個交易日資料，尚不足以建立可靠的費波那契波段。`,
     );
   }
 
@@ -522,6 +548,125 @@ const roundToTick = (price: number, direction: "up" | "down") => {
 
 const formatPrice = (value: number) =>
   new Intl.NumberFormat("zh-TW", { maximumFractionDigits: value < 50 ? 2 : 1 }).format(value);
+
+export function analyzeFibonacci(code: string, name: string, bars: DailyBar[]): FibonacciAnalysis {
+  if (bars.length < 40) throw new Error("至少需要 40 個交易日資料才能建立費波那契波段。");
+
+  const windowBars = bars.slice(-120);
+  const lowIndex = windowBars.reduce(
+    (best, bar, index) => (bar.low < windowBars[best].low ? index : best),
+    0,
+  );
+  const highIndex = windowBars.reduce(
+    (best, bar, index) => (bar.high > windowBars[best].high ? index : best),
+    0,
+  );
+  const swingLow = { date: windowBars[lowIndex].date, price: windowBars[lowIndex].low };
+  const swingHigh = { date: windowBars[highIndex].date, price: windowBars[highIndex].high };
+  const priceRange = swingHigh.price - swingLow.price;
+  if (!(priceRange > 0)) throw new Error("波段高低點相同，暫時無法建立費波那契區間。");
+
+  const latest = windowBars.at(-1)!;
+  const direction: FibonacciAnalysis["direction"] =
+    lowIndex === highIndex
+      ? latest.close >= (swingHigh.price + swingLow.price) / 2
+        ? "up"
+        : "down"
+      : lowIndex < highIndex
+        ? "up"
+        : "down";
+  const retracementRatios = [0.236, 0.382, 0.5, 0.618, 0.786];
+  const extensionRatios = [1.272, 1.618, 2];
+  const retracements = retracementRatios.map((ratio) => ({
+    ratio,
+    label: `${(ratio * 100).toFixed(ratio === 0.5 ? 0 : 1)}%`,
+    price:
+      direction === "up"
+        ? swingHigh.price - priceRange * ratio
+        : swingLow.price + priceRange * ratio,
+  }));
+  const extensions = extensionRatios.map((ratio) => ({
+    ratio,
+    label: ratio.toFixed(ratio === 2 ? 1 : 3),
+    price:
+      direction === "up"
+        ? swingLow.price + priceRange * ratio
+        : Math.max(0, swingHigh.price - priceRange * ratio),
+  }));
+  const retracementPercent =
+    direction === "up"
+      ? ((swingHigh.price - latest.close) / priceRange) * 100
+      : ((latest.close - swingLow.price) / priceRange) * 100;
+
+  let zoneLabel = "關鍵區間";
+  let summary = "價格正處在費波那契關鍵區，需搭配量價與轉強訊號確認。";
+  if (direction === "up") {
+    if (latest.close > swingHigh.price) {
+      zoneLabel = "突破擴展區";
+      summary = "價格已突破波段高點，可依序觀察 1.272、1.618 與 2.0 擴展目標，並分段移動停利。";
+    } else if (retracementPercent <= 23.6) {
+      zoneLabel = "強勢淺回檔";
+      summary = "回檔尚未超過 23.6%，走勢偏強；不追價，等待短線轉強或回測支撐。";
+    } else if (retracementPercent <= 38.2) {
+      zoneLabel = "健康回檔區";
+      summary = "價格位於 23.6%–38.2% 回檔帶，是強勢多頭常見的第一層承接區。";
+    } else if (retracementPercent <= 61.8) {
+      zoneLabel = "核心承接區";
+      summary = "價格進入 38.2%–61.8% 核心回檔帶，應等待止跌與轉強，不能只因碰線就買進。";
+    } else if (retracementPercent <= 78.6) {
+      zoneLabel = "深度回檔區";
+      summary = "回檔已超過 61.8%，波段結構轉弱；僅列入觀察，不宜預設一定反彈。";
+    } else {
+      zoneLabel = "波段失守風險";
+      summary = "價格接近或跌破 78.6% 回檔，原上升波段可能失效，應優先控制風險。";
+    }
+  } else if (latest.close < swingLow.price) {
+    zoneLabel = "下跌擴展區";
+    summary = "價格跌破波段低點，1.272、1.618 與 2.0 為下行風險參考，不作為接刀依據。";
+  } else if (retracementPercent <= 38.2) {
+    zoneLabel = "弱勢反彈區";
+    summary = "下降波段僅出現淺幅反彈，上方費波那契價位仍視為壓力，不提供多方進場訊號。";
+  } else if (retracementPercent <= 61.8) {
+    zoneLabel = "主要反壓區";
+    summary = "反彈進入 38.2%–61.8% 壓力帶，需先確認趨勢反轉，不能把反彈直接當成多頭。";
+  } else {
+    zoneLabel = "深度反彈區";
+    summary = "反彈已收復大部分跌幅，但仍需站回波段高點與長期均線，才算完成結構反轉。";
+  }
+
+  const priceLevels = [
+    swingLow.price,
+    swingHigh.price,
+    ...retracements.map((level) => level.price),
+    ...extensions.map((level) => level.price),
+  ];
+  const nearestSupport = priceLevels
+    .filter((price) => price < latest.close)
+    .sort((a, b) => b - a)[0] ?? null;
+  const nearestResistance = priceLevels
+    .filter((price) => price > latest.close)
+    .sort((a, b) => a - b)[0] ?? null;
+
+  return {
+    code,
+    name,
+    dataDate: latest.date,
+    barsCount: bars.length,
+    lookback: windowBars.length,
+    direction,
+    directionLabel: direction === "up" ? "上升波段" : "下降波段",
+    currentPrice: latest.close,
+    swingLow,
+    swingHigh,
+    retracementPercent,
+    zoneLabel,
+    summary,
+    retracements,
+    extensions,
+    nearestSupport,
+    nearestResistance,
+  };
+}
 
 const finite = (value: number | null | undefined, label: string) => {
   if (value === null || value === undefined || !Number.isFinite(value)) {
