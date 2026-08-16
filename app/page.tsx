@@ -510,7 +510,7 @@ export default function Home() {
       </div>
 
       <footer>
-        <span>資料來源：臺灣證券交易所 TAIEX／STOCK_DAY</span>
+        <span>資料來源：FinMind 日線資料・TWSE 備援</span>
         <span>僅支援上市股票與 ETF・日線收盤後更新</span>
       </footer>
     </main>

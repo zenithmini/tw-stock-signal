@@ -147,6 +147,78 @@ const extractName = (title: string, code: string) => {
   return match?.[1]?.trim() || code;
 };
 
+const formatIsoDate = (date: Date) =>
+  `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
+
+const finMindDateRange = () => {
+  const now = new Date();
+  return {
+    startDate: formatIsoDate(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 12, 1))),
+    endDate: new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Taipei" }),
+  };
+};
+
+async function fetchFinMindDailyBars(dataId: string): Promise<DailyBar[]> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 15_000);
+  try {
+    const { startDate, endDate } = finMindDateRange();
+    const endpoint = new URL("https://api.finmindtrade.com/api/v4/data");
+    endpoint.searchParams.set("dataset", "TaiwanStockPrice");
+    endpoint.searchParams.set("data_id", dataId);
+    endpoint.searchParams.set("start_date", startDate);
+    endpoint.searchParams.set("end_date", endDate);
+    const response = await fetch(endpoint, { cache: "no-store", signal: controller.signal });
+    if (!response.ok) throw new Error(`FinMind HTTP ${response.status}`);
+    const payload = (await response.json()) as {
+      status?: number;
+      data?: Array<Record<string, unknown>>;
+    };
+    if (payload.status !== 200 || !Array.isArray(payload.data)) {
+      throw new Error("FinMind 未回傳有效日線資料");
+    }
+    return payload.data
+      .map((row) => ({
+        date: String(row.date ?? ""),
+        open: parseNumber(row.open),
+        high: parseNumber(row.max),
+        low: parseNumber(row.min),
+        close: parseNumber(row.close),
+        volume: parseNumber(row.Trading_Volume) || 0,
+        turnover: parseNumber(row.Trading_money) || 0,
+        transactions: parseNumber(row.Trading_turnover) || 0,
+      }))
+      .filter(
+        (bar) =>
+          /^\d{4}-\d{2}-\d{2}$/.test(bar.date) &&
+          [bar.open, bar.high, bar.low, bar.close].every(Number.isFinite),
+      )
+      .sort((a, b) => a.date.localeCompare(b.date));
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
+async function fetchFinMindStockName(code: string): Promise<string> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 10_000);
+  try {
+    const endpoint = new URL("https://api.finmindtrade.com/api/v4/data");
+    endpoint.searchParams.set("dataset", "TaiwanStockInfo");
+    endpoint.searchParams.set("data_id", code);
+    const response = await fetch(endpoint, { cache: "no-store", signal: controller.signal });
+    if (!response.ok) return code;
+    const payload = (await response.json()) as {
+      data?: Array<{ stock_name?: string }>;
+    };
+    return payload.data?.at(-1)?.stock_name?.trim() || code;
+  } catch {
+    return code;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
 export async function fetchTwseDailyBars(
   code: string,
   onProgress?: (completed: number, total: number) => void,
@@ -154,6 +226,16 @@ export async function fetchTwseDailyBars(
   const normalizedCode = code.trim();
   if (!/^\d{4,6}$/.test(normalizedCode)) {
     throw new Error("請輸入 4–6 位數字的上市股票或 ETF 代碼，例如 0050、2330。");
+  }
+
+  try {
+    const finMindBars = await fetchFinMindDailyBars(normalizedCode);
+    onProgress?.(1, 2);
+    const finMindName = await fetchFinMindStockName(normalizedCode);
+    onProgress?.(2, 2);
+    if (finMindBars.length >= 120) return { name: finMindName, bars: finMindBars };
+  } catch {
+    // FinMind is the GitHub Pages-friendly source; TWSE remains the fallback.
   }
 
   const queries = monthQueries(10);
@@ -233,6 +315,14 @@ export async function fetchTwseDailyBars(
 export async function fetchTaiexDailyBars(
   onProgress?: (completed: number, total: number) => void,
 ): Promise<DailyBar[]> {
+  try {
+    const finMindBars = await fetchFinMindDailyBars("TAIEX");
+    onProgress?.(1, 1);
+    if (finMindBars.length >= 120) return finMindBars;
+  } catch {
+    // Fall back to the official TWSE endpoint when it is reachable.
+  }
+
   const queries = monthQueries(10);
   const collected: DailyBar[] = [];
   let completed = 0;
