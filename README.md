@@ -44,6 +44,14 @@ npm run build:pages
 
 GitHub Pages 使用的靜態檔會在 `dist/client`。
 
+## AdSense 申請準備
+
+- 首頁底部已保留自適應橫幅廣告位置，尚未載入任何廣告追蹤程式。
+- 頁尾提供隱私權政策，說明本機儲存、市場資料來源與未來的廣告 Cookie。
+- 建議將相同網站部署到名為 `你的帳號.github.io` 的公開 repository，讓申請網址使用 `https://你的帳號.github.io/` 根網址；原本的專案網址可繼續保留。
+- AdSense 核准並取得 `ca-pub-...` 發布商 ID 與廣告單元編號後，才把官方程式碼放入預留位置。
+- 取得發布商 ID 後，再於 `public/ads.txt` 加入 AdSense 提供的那一行；請勿先填入範例或他人的 ID。
+
 ## 策略摘要
 
 第一步先判斷加權指數：

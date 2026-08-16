@@ -600,11 +600,19 @@ export default function Home() {
             </div>
           </section>
         ) : null}
+
+        <section className="ad-placeholder" aria-label="廣告預留區">
+          <span>廣告</span>
+          <div>
+            <strong>自適應橫幅廣告預留區</strong>
+            <small>AdSense 審核通過後，廣告將在此自動配合手機與電腦寬度顯示。</small>
+          </div>
+        </section>
       </div>
 
       <footer>
         <span>資料來源：FinMind 日線資料・TWSE 備援</span>
-        <span>僅支援上市股票與 ETF・日線收盤後更新</span>
+        <span className="footer-links"><a href="./privacy/">隱私權政策</a><i />僅支援上市股票與 ETF・日線收盤後更新</span>
       </footer>
     </main>
   );
