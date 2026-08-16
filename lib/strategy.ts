@@ -113,6 +113,12 @@ type IndicatorSeries = {
   volumeMa20: Array<number | null>;
 };
 
+export const normalizeStockCode = (value: string) =>
+  value.trim().toUpperCase().replace(/[^0-9A-Z]/g, "").slice(0, 6);
+
+export const isSupportedStockCode = (value: string) =>
+  /^(?:\d{4,6}|\d{4,5}[A-Z])$/.test(normalizeStockCode(value));
+
 const formatQueryMonth = (date: Date) => {
   const year = date.getUTCFullYear();
   const month = String(date.getUTCMonth() + 1).padStart(2, "0");
@@ -223,19 +229,28 @@ export async function fetchTwseDailyBars(
   code: string,
   onProgress?: (completed: number, total: number) => void,
 ): Promise<{ name: string; bars: DailyBar[] }> {
-  const normalizedCode = code.trim();
-  if (!/^\d{4,6}$/.test(normalizedCode)) {
-    throw new Error("請輸入 4–6 位數字的上市股票或 ETF 代碼，例如 0050、2330。");
+  const normalizedCode = normalizeStockCode(code);
+  if (!isSupportedStockCode(normalizedCode)) {
+    throw new Error("請輸入 4–6 碼的上市股票或 ETF 代碼，例如 0050、2330、00403A。");
   }
 
+  let finMindData: { name: string; bars: DailyBar[] } | null = null;
   try {
     const finMindBars = await fetchFinMindDailyBars(normalizedCode);
     onProgress?.(1, 2);
     const finMindName = await fetchFinMindStockName(normalizedCode);
     onProgress?.(2, 2);
-    if (finMindBars.length >= 120) return { name: finMindName, bars: finMindBars };
+    finMindData = { name: finMindName, bars: finMindBars };
   } catch {
     // FinMind is the GitHub Pages-friendly source; TWSE remains the fallback.
+  }
+
+  if (finMindData?.bars.length) {
+    if (finMindData.bars.length >= 120) return finMindData;
+    throw new Error(
+      `${finMindData.name}（${normalizedCode}）目前只有 ${finMindData.bars.length} 個交易日資料，` +
+        "尚不足以計算 MA99；累積至少 120 個交易日後才能使用本策略。",
+    );
   }
 
   const queries = monthQueries(10);

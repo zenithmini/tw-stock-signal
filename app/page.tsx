@@ -9,6 +9,8 @@ import {
   analyzeMarketRegime,
   fetchTaiexDailyBars,
   fetchTwseDailyBars,
+  isSupportedStockCode,
+  normalizeStockCode,
 } from "@/lib/strategy";
 
 const DEFAULT_SETTINGS: StrategySettings = {
@@ -177,11 +179,11 @@ export default function Home() {
     };
   }, []);
 
-  const normalizedCode = code.trim();
+  const normalizedCode = normalizeStockCode(code);
   const isStarred = watchlist.includes(normalizedCode);
 
   const runAnalysis = async (requestedCode = normalizedCode) => {
-    const target = requestedCode.trim();
+    const target = normalizeStockCode(requestedCode);
     setCode(target);
     setStatus("loading");
     setError("");
@@ -268,7 +270,7 @@ export default function Home() {
   };
 
   const toggleWatchlist = () => {
-    if (!/^\d{4,6}$/.test(normalizedCode)) return;
+    if (!isSupportedStockCode(normalizedCode)) return;
     const next = isStarred ? watchlist.filter((item) => item !== normalizedCode) : [normalizedCode, ...watchlist].slice(0, 12);
     setWatchlist(next);
     localStorage.setItem("tw-signal-watchlist", JSON.stringify(next));
@@ -303,10 +305,12 @@ export default function Home() {
               <input
                 aria-label="股票代碼"
                 autoComplete="off"
-                inputMode="numeric"
+                autoCapitalize="characters"
+                inputMode="text"
                 maxLength={6}
-                onChange={(event) => setCode(event.target.value.replace(/\D/g, ""))}
-                placeholder="例如 0050、2330"
+                onChange={(event) => setCode(normalizeStockCode(event.target.value))}
+                placeholder="例如 0050、2330、00403A"
+                spellCheck={false}
                 value={code}
               />
               <button className={`star-button${isStarred ? " active" : ""}`} type="button" onClick={toggleWatchlist} aria-label={isStarred ? "從自選股移除" : "加入自選股"}>
